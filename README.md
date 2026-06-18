@@ -2,6 +2,9 @@
 
 CarePulse is a premium, secure, and modern clinic management and Electronic Health Records (EHR) platform built with **Next.js 16/15**, **React 19**, and **Tailwind CSS**. It is designed to optimize medical consults, scheduling calendars, billing invoices, laboratory reports, and complete clinical histories.
 
+### 🔗 Live Website
+Visit the live application at: **[smart-patient-management-system-ochre.vercel.app](https://smart-patient-management-system-ochre.vercel.app/)**
+
 ---
 
 ## 🚀 Key Features
