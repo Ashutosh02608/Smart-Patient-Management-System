@@ -12,6 +12,11 @@ export default function Sidebar({ user, activeTab, onTabChange, badges = {} }) {
     { id: 'appointments', label: 'Appointments', icon: '📅', badgeKey: 'appointments' },
     ...(user?.role !== 'patient' ? [{ id: 'calendar', label: 'Calendar', icon: '🗓️', badgeKey: null }] : []),
     { id: 'reports', label: 'Reports', icon: '📝', badgeKey: 'reports' },
+    ...(user?.role === 'patient' ? [
+      { id: 'billing', label: 'Billing', icon: '💳', badgeKey: null },
+      { id: 'lab-reports', label: 'Lab Reports', icon: '🔬', badgeKey: null }
+    ] : []),
+    { id: 'messages', label: 'Messages', icon: '💬', badgeKey: null },
     { id: 'settings', label: 'Settings', icon: '⚙️', badgeKey: null },
   ];
 

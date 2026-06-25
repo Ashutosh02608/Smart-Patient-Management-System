@@ -53,7 +53,7 @@ export default function Home() {
           </h1>
 
           <p className="text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto leading-relaxed">
-            CarePulse provides a secure, HIPAA-compliant patient management system designed for small clinics. Organize appointments, records, and staff schedules seamlessly.
+            CarePulse provides a secure patient management system designed for small clinics. Organize appointments, records, and staff schedules seamlessly.
           </p>
         </div>
 
@@ -110,7 +110,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="h-16 border-t border-zinc-900 px-6 md:px-16 flex items-center justify-between text-xs text-zinc-500 relative z-10 shrink-0">
         <span>&copy; {new Date().getFullYear()} CarePulse Healthcare Technologies, Inc. All rights reserved.</span>
-        <span>Secure & HIPAA Compliant Portal</span>
+        <span>Secure Portal Workspace</span>
       </footer>
     </main>
   );

@@ -51,6 +51,12 @@ function ReceptionistDashboardContent() {
   const [reschedSuccess, setReschedSuccess] = useState('');
   const [reschedLoading, setReschedLoading] = useState(false);
 
+  // Secure Messaging States
+  const [selectedChatUser, setSelectedChatUser] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [newMessageText, setNewMessageText] = useState('');
+  const [sendingMsg, setSendingMsg] = useState(false);
+
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
 
@@ -107,6 +113,101 @@ function ReceptionistDashboardContent() {
       active = false;
     };
   }, [user, fetchData]);
+
+  // Messaging Handlers & Effects
+  const fetchMessages = useCallback(async (recipientId) => {
+    if (!recipientId) return;
+    try {
+      const res = await fetch(`/api/messages?recipientId=${recipientId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages(data.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)));
+      }
+    } catch (err) {
+      console.error("Error fetching messages:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'messages' || !selectedChatUser) return;
+
+    setTimeout(() => {
+      fetchMessages(selectedChatUser.id);
+    }, 0);
+
+    let interval;
+    const startPolling = () => {
+      if (interval) clearInterval(interval);
+      interval = setInterval(() => {
+        if (!document.hidden) {
+          fetchMessages(selectedChatUser.id);
+        }
+      }, 3000);
+    };
+
+    startPolling();
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearInterval(interval);
+        interval = null;
+      } else {
+        fetchMessages(selectedChatUser.id);
+        startPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeTab, selectedChatUser, fetchMessages]);
+
+  useEffect(() => {
+    const container = document.getElementById('receptionist-chat-messages-container');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  const selectUserChat = (chatUser) => {
+    setSelectedChatUser(chatUser);
+    setChatMessages([]);
+    fetchMessages(chatUser.id);
+  };
+
+  const refreshMessages = () => {
+    if (selectedChatUser) fetchMessages(selectedChatUser.id);
+  };
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessageText.trim() || !selectedChatUser || sendingMsg) return;
+
+    setSendingMsg(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receiverId: selectedChatUser.id,
+          content: newMessageText.trim()
+        })
+      });
+
+      if (res.ok) {
+        const newMsg = await res.json();
+        setChatMessages(prev => [...prev, newMsg]);
+        setNewMessageText('');
+      }
+    } catch (err) {
+      console.error("Error sending message:", err);
+    } finally {
+      setSendingMsg(false);
+    }
+  };
 
   // Appointment Status Updates (e.g. Check-in, Cancel)
   const handleUpdateStatus = async (id, status) => {
@@ -1044,6 +1145,150 @@ function ReceptionistDashboardContent() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'messages' && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 h-[600px] border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-900/10 animate-fadeIn">
+              {/* Left Users list sidebar */}
+              <div className="bg-zinc-950/60 border-r border-zinc-800 flex flex-col h-full">
+                <div className="p-4 border-b border-zinc-800 bg-zinc-900/20">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Clinic Directory</h3>
+                  <p className="text-[10px] text-zinc-550 mt-1">Select a doctor or patient to coordinate</p>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-2 space-y-4">
+                  {/* Doctors Section */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] uppercase tracking-wider font-bold text-cyan-400/80 px-2 block">🩺 Clinical Staff</span>
+                    <div className="space-y-0.5">
+                      {doctors.filter(d => d.name.toLowerCase().includes(searchQuery.toLowerCase())).map((doc) => {
+                        const isSelected = selectedChatUser?.id === doc.id;
+                        return (
+                          <button
+                            key={doc.id}
+                            onClick={() => selectUserChat(doc)}
+                            className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 border-cyan-500/30 text-cyan-400 font-semibold shadow-sm'
+                                : 'bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800/40 hover:text-white'
+                            }`}
+                          >
+                            <strong className="text-xs block font-bold">{doc.name}</strong>
+                            <span className="text-[9px] font-mono text-zinc-555 block mt-0.5">{doc.profile?.specialization || 'Specialist'}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Patients Section */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] uppercase tracking-wider font-bold text-indigo-400/80 px-2 block">👤 Patients</span>
+                    <div className="space-y-0.5">
+                      {patients.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase())).map((pat) => {
+                        const isSelected = selectedChatUser?.id === pat.id;
+                        return (
+                          <button
+                            key={pat.id}
+                            onClick={() => selectUserChat(pat)}
+                            className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 border-cyan-500/30 text-cyan-400 font-semibold shadow-sm'
+                                : 'bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800/40 hover:text-white'
+                            }`}
+                          >
+                            <strong className="text-xs block font-bold">{pat.name}</strong>
+                            <span className="text-[9px] font-mono text-zinc-555 block mt-0.5">ID: {pat.id.substring(0, 8)}...</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Chat Panel */}
+              <div className="md:col-span-3 flex flex-col h-full bg-zinc-950/40">
+                {selectedChatUser ? (
+                  <>
+                    {/* Header */}
+                    <div className="p-4 border-b border-zinc-800 bg-zinc-900/30 flex justify-between items-center font-sans">
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center space-x-1.5">
+                          <span>{selectedChatUser.role === 'doctor' ? '🩺' : '👤'}</span>
+                          <span>{selectedChatUser.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-850 text-zinc-400 capitalize font-medium">{selectedChatUser.role}</span>
+                        </h4>
+                        <p className="text-[10px] text-zinc-550 mt-0.5 font-sans">Secure messaging thread &bull; {selectedChatUser.email}</p>
+                      </div>
+                      <button
+                        onClick={refreshMessages}
+                        className="py-1.5 px-3 bg-zinc-900 hover:bg-zinc-855 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 rounded-lg text-[9px] font-bold cursor-pointer transition-all"
+                      >
+                        🔄 Sync Chat
+                      </button>
+                    </div>
+
+                    {/* Messages Area */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3" id="receptionist-chat-messages-container">
+                      {chatMessages.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-2 font-sans">
+                          <span className="text-3xl">💬</span>
+                          <p className="text-xs text-zinc-500">No messages exchanged yet.</p>
+                          <p className="text-[9px] text-zinc-650 max-w-xs font-sans">Send a secure message below to start coordination.</p>
+                        </div>
+                      ) : (
+                        chatMessages.map((msg) => {
+                          const isMine = msg.senderId === user.id;
+                          return (
+                            <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`max-w-[70%] p-3 rounded-2xl text-xs space-y-1 ${
+                                isMine
+                                  ? 'bg-gradient-to-br from-cyan-600/90 to-indigo-650/90 text-white rounded-tr-none'
+                                  : 'bg-zinc-800 text-zinc-250 rounded-tl-none border border-zinc-750'
+                              }`}>
+                                <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                <span className="text-[8px] opacity-65 block text-right font-mono">
+                                  {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Input Area */}
+                    <form onSubmit={sendMessage} className="p-4 border-t border-zinc-850 bg-zinc-950 flex items-center space-x-2 font-sans">
+                      <input
+                        type="text"
+                        value={newMessageText}
+                        onChange={(e) => setNewMessageText(e.target.value)}
+                        placeholder={`Send secure message to ${selectedChatUser.name}...`}
+                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 placeholder-zinc-550"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!newMessageText.trim() || sendingMsg}
+                        className="py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-zinc-955 font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {sendingMsg ? '...' : 'Send'}
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8 space-y-3 font-sans">
+                    <div className="h-16 w-16 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-2xl text-zinc-500 shadow-inner">
+                      💬
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white">Secure Clinic Coordination Messaging</h4>
+                      <p className="text-xs text-zinc-550 max-w-sm mt-1">Select a doctor or patient from the clinic directory to coordinate schedules, consults, and invoice queries.</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

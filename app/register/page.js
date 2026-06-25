@@ -14,12 +14,55 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [isPendingApproval, setIsPendingApproval] = useState(false);
 
-  const handleSubmit = async (e) => {
+  // OTP Signup States
+  const [step, setStep] = useState('form'); // 'form' or 'otp'
+  const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [otpSentCode, setOtpSentCode] = useState('');
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown(prev => prev - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
+  const handleSendOtp = async (e) => {
     e.preventDefault();
     setError('');
+    setOtpError('');
 
-    if (!name || !email || !password || !role) {
+    if (!name.trim() || !email.trim() || !password || !role) {
       setError('Please fill in all fields.');
+      return;
+    }
+
+    if (name.trim().length < 3) {
+      setError('Full name must be at least 3 characters.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+
+    const hasUppercase = /[A-Z]/.test(password);
+    const hasLowercase = /[a-z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+    const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+    if (!hasUppercase || !hasLowercase || !hasNumber || !hasSpecial) {
+      setError('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character.');
       return;
     }
 
@@ -28,16 +71,66 @@ export default function RegisterPage() {
       return;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    setSendingOtp(true);
+    try {
+      const res = await fetch('/api/auth/register/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to send OTP verification code.');
+      }
+      
+      if (data.otp) {
+        setOtpSentCode(data.otp);
+      }
+      setStep('otp');
+      setResendCooldown(30);
+    } catch (err) {
+      setError(err.message || 'An error occurred.');
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  const handleVerifyAndRegister = async (e) => {
+    e.preventDefault();
+    setOtpError('');
+
+    if (!otp || otp.length !== 6) {
+      setOtpError('Please enter a valid 6-digit verification code.');
       return;
     }
 
-    const res = await register(name, email, password, role);
+    const res = await register(name, email, password, role, otp);
     if (!res.success) {
-      setError(res.error || 'Failed to register account.');
+      setOtpError(res.error || 'Invalid verification code or registration failed.');
     } else if (res.pendingApproval) {
       setIsPendingApproval(true);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return;
+    setOtpError('');
+    try {
+      const res = await fetch('/api/auth/register/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to resend verification code.');
+      }
+      if (data.otp) {
+        setOtpSentCode(data.otp);
+      }
+      setResendCooldown(30);
+    } catch (err) {
+      setOtpError(err.message || 'Failed to resend OTP.');
     }
   };
 
@@ -60,7 +153,7 @@ export default function RegisterPage() {
             <Link
               id="pending-login-redirect"
               href="/login"
-              className="block w-full text-center py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-650 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-sm shadow-lg shadow-cyan-500/10 active:scale-[0.98] transition-all duration-200 cursor-pointer"
+              className="block w-full text-center py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-655 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-sm shadow-lg shadow-cyan-500/10 active:scale-[0.98] transition-all duration-200 cursor-pointer"
             >
               Back to Sign In
             </Link>
@@ -123,110 +216,190 @@ export default function RegisterPage() {
         </div>
       </div>
 
-      {/* Register Form Pane */}
+      {/* Register Form / OTP Pane */}
       <div className="flex-1 flex flex-col justify-center items-center p-6 md:p-16 relative">
+        <div className="absolute top-6 left-6 md:top-8 md:left-8">
+          <Link
+            href="/"
+            className="flex items-center space-x-2 text-xs font-semibold text-zinc-400 hover:text-white transition-colors py-2 px-3 rounded-lg bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800/80 hover:border-zinc-700/80 backdrop-blur-sm"
+          >
+            <span>←</span>
+            <span>Back to Homepage</span>
+          </Link>
+        </div>
+
         <div className="w-full max-w-md space-y-6">
-          <div className="space-y-2 text-center md:text-left">
-            <h2 className="text-3xl font-bold tracking-tight text-white">Register</h2>
-            <p className="text-sm text-zinc-400">
-              Create an account to begin using CarePulse.
-            </p>
-          </div>
+          {step === 'form' ? (
+            <>
+              <div className="space-y-2 text-center md:text-left">
+                <h2 className="text-3xl font-bold tracking-tight text-white">Register</h2>
+                <p className="text-sm text-zinc-400">
+                  Create an account to begin using CarePulse.
+                </p>
+              </div>
 
-          {error && (
-            <div className="bg-rose-950/50 border border-rose-800 text-rose-200 p-4 rounded-xl text-sm" id="register-error">
-              {error}
-            </div>
+              {error && (
+                <div className="bg-rose-950/50 border border-rose-800 text-rose-200 p-4 rounded-xl text-sm" id="register-error">
+                  {error}
+                </div>
+              )}
+
+              <form onSubmit={handleSendOtp} className="space-y-4">
+                <div className="space-y-1">
+                  <label htmlFor="name" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Full Name
+                  </label>
+                  <input
+                    id="name"
+                    type="text"
+                    required
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
+                    placeholder="Dr. John Watson or Jane Doe"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="email" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Email Address
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    required
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
+                    placeholder="name@clinic.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label htmlFor="password" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      type="password"
+                      required
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="confirmPassword" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                      Confirm Password
+                    </label>
+                    <input
+                      id="confirmPassword"
+                      type="password"
+                      required
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800">
+                  <label htmlFor="role" className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block mb-1">
+                    Account Role
+                  </label>
+                  <select
+                    id="role"
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 text-sm"
+                  >
+                    <option value="patient">Patient (Manage your health & bookings)</option>
+                    <option value="doctor">Doctor (Consultations & medical records)</option>
+                    <option value="receptionist">Receptionist (Schedules & check-ins)</option>
+                  </select>
+                </div>
+
+                <button
+                  id="register-submit"
+                  type="submit"
+                  disabled={sendingOtp}
+                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-650 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-sm shadow-lg shadow-cyan-500/10 active:scale-[0.98] transition-all duration-200 cursor-pointer disabled:opacity-50"
+                >
+                  {sendingOtp ? 'Sending OTP Verification...' : 'Register'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2 text-center md:text-left">
+                <h2 className="text-3xl font-bold tracking-tight text-white font-sans">Verify Your Email</h2>
+                <p className="text-sm text-zinc-400">
+                  We have sent a 6-digit verification code to <strong className="text-zinc-200">{email}</strong>.
+                </p>
+              </div>
+
+              {otpError && (
+                <div className="bg-rose-950/50 border border-rose-800 text-rose-200 p-4 rounded-xl text-sm" id="otp-error">
+                  {otpError}
+                </div>
+              )}
+
+
+
+              <form onSubmit={handleVerifyAndRegister} className="space-y-4">
+                <div className="space-y-1">
+                  <label htmlFor="otp" className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block mb-1">
+                    Enter Verification Code
+                  </label>
+                  <input
+                    id="otp"
+                    type="text"
+                    required
+                    maxLength={6}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 text-center text-xl tracking-widest font-bold font-mono transition-all duration-200"
+                    placeholder="123456"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').substring(0, 6))}
+                  />
+                </div>
+
+                <button
+                  id="otp-submit"
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-650 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-sm shadow-lg shadow-cyan-500/10 active:scale-[0.98] transition-all duration-200 cursor-pointer disabled:opacity-50"
+                >
+                  {loading ? 'Verifying & Registering...' : 'Verify & Complete Registration'}
+                </button>
+
+                <div className="flex justify-between items-center text-xs pt-2">
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={resendCooldown > 0}
+                    className="font-medium text-cyan-400 hover:text-cyan-300 transition-colors disabled:text-zinc-650 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {resendCooldown > 0 ? `Resend Code (${resendCooldown}s)` : 'Resend Code'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStep('form');
+                      setError('');
+                      setOtpError('');
+                    }}
+                    className="font-medium text-zinc-450 hover:text-zinc-200 transition-colors underline cursor-pointer"
+                  >
+                    Change Email / Go Back
+                  </button>
+                </div>
+              </form>
+            </>
           )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1">
-              <label htmlFor="name" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                Full Name
-              </label>
-              <input
-                id="name"
-                type="text"
-                required
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
-                placeholder="Dr. John Watson or Jane Doe"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label htmlFor="email" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                Email Address
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
-                placeholder="name@clinic.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label htmlFor="password" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  Password
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label htmlFor="confirmPassword" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  Confirm Password
-                </label>
-                <input
-                  id="confirmPassword"
-                  type="password"
-                  required
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all duration-200"
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1 bg-zinc-900/40 p-3 rounded-xl border border-zinc-800">
-              <label htmlFor="role" className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block mb-1">
-                Account Role
-              </label>
-              <select
-                id="role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 text-sm"
-              >
-                <option value="patient">Patient (Manage your health & bookings)</option>
-                <option value="doctor">Doctor (Consultations & medical records)</option>
-                <option value="receptionist">Receptionist (Schedules & check-ins)</option>
-              </select>
-            </div>
-
-            <button
-              id="register-submit"
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-650 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-sm shadow-lg shadow-cyan-500/10 active:scale-[0.98] transition-all duration-200 cursor-pointer disabled:opacity-50"
-            >
-              {loading ? 'Registering Account...' : 'Register'}
-            </button>
-          </form>
 
           <div className="text-center pt-2">
             <p className="text-sm text-zinc-400">

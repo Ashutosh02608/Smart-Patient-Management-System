@@ -32,6 +32,95 @@ export default function PatientProfilePage({ params }) {
   const [invoices, setInvoices] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
 
+  // Secure Messaging States
+  const [chatMessages, setChatMessages] = useState([]);
+  const [newMessageText, setNewMessageText] = useState('');
+  const [sendingMsg, setSendingMsg] = useState(false);
+
+  const fetchMessages = useCallback(async () => {
+    if (!patientId) return;
+    try {
+      const res = await fetch(`/api/messages?recipientId=${patientId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages(data.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)));
+      }
+    } catch (err) {
+      console.error("Error fetching messages:", err);
+    }
+  }, [patientId]);
+
+  useEffect(() => {
+    if (activeSubTab !== 'messages' || !patientId) return;
+
+    setTimeout(() => {
+      fetchMessages();
+    }, 0);
+
+    let interval;
+    const startPolling = () => {
+      if (interval) clearInterval(interval);
+      interval = setInterval(() => {
+        if (!document.hidden) {
+          fetchMessages();
+        }
+      }, 3000);
+    };
+
+    startPolling();
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearInterval(interval);
+        interval = null;
+      } else {
+        fetchMessages();
+        startPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeSubTab, patientId, fetchMessages]);
+
+  useEffect(() => {
+    const container = document.getElementById('patient-detail-chat-container');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessageText.trim() || !patientId || sendingMsg) return;
+
+    setSendingMsg(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receiverId: patientId,
+          content: newMessageText.trim()
+        })
+      });
+
+      if (res.ok) {
+        const newMsg = await res.json();
+        setChatMessages(prev => [...prev, newMsg]);
+        setNewMessageText('');
+      }
+    } catch (err) {
+      console.error("Error sending message:", err);
+    } finally {
+      setSendingMsg(false);
+    }
+  };
+
   // Form States: New Medical Record
   const [diagFinding, setDiagFinding] = useState('');
   const [diagSymptoms, setDiagSymptoms] = useState('');
@@ -350,7 +439,6 @@ export default function PatientProfilePage({ params }) {
                 </div>
               </div>
             </div>
-
             {/* Profile sub tabs selector */}
             <div className="flex border-b border-zinc-850 overflow-x-auto space-x-1 pr-4">
               {[
@@ -360,7 +448,8 @@ export default function PatientProfilePage({ params }) {
                 { id: 'history', label: 'Medical History', icon: '📝' },
                 { id: 'prescriptions', label: 'Prescriptions', icon: '💊' },
                 { id: 'labs', label: 'Lab Reports', icon: '🔬' },
-                { id: 'billing', label: 'Billing', icon: '💳' }
+                { id: 'billing', label: 'Billing', icon: '💳' },
+                { id: 'messages', label: 'Messages', icon: '💬' }
               ].map((subTab) => (
                 <button
                   key={subTab.id}
@@ -987,101 +1076,80 @@ export default function PatientProfilePage({ params }) {
 
               {/* TAB 6: BILLING */}
               {activeSubTab === 'billing' && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                  
-                  {/* Bills registry table */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start animate-fadeIn">
+                  {/* Transaction ledger list */}
                   <div className="lg:col-span-2 bg-zinc-900/40 border border-zinc-800 rounded-2xl overflow-hidden">
                     <div className="p-6 border-b border-zinc-800 bg-zinc-900/20 flex justify-between items-center">
-                      <h3 className="text-sm font-bold text-white">Billing & Transaction Ledger</h3>
-                      <span className="text-xs text-zinc-550">{invoices.length} bill(s) found</span>
+                      <h3 className="text-sm font-bold text-white">Clinical Transaction Ledger</h3>
+                      <span className="text-xs text-zinc-550">{invoices.length} entries total</span>
                     </div>
 
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="bg-zinc-900/60 border-b border-zinc-850 text-zinc-400 text-[10px] uppercase font-bold tracking-wider">
-                            <th className="p-4">Invoice ID</th>
-                            <th className="p-4">Description</th>
-                            <th className="p-4">Date</th>
-                            <th className="p-4">Amount</th>
-                            <th className="p-4">Payment Status</th>
-                            <th className="p-4 text-right">Process</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-850">
-                          {invoices.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} className="p-8 text-center text-zinc-555 italic">
-                                No billing transactions generated on record.
-                              </td>
+                      {invoices.length === 0 ? (
+                        <p className="text-xs text-zinc-500 italic p-6 text-center">No billing transactions generated on record.</p>
+                      ) : (
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-zinc-850 text-[10px] uppercase text-zinc-500 font-bold tracking-wider">
+                              <th className="p-4">Invoice ID</th>
+                              <th className="p-4">Date</th>
+                              <th className="p-4">Description</th>
+                              <th className="p-4">Amount</th>
+                              <th className="p-4">Status</th>
+                              <th className="p-4 text-right">Actions</th>
                             </tr>
-                          ) : (
-                            invoices.map((inv) => (
-                              <tr key={inv.id} className="hover:bg-zinc-900/20 transition-colors">
-                                <td className="p-4 font-mono text-zinc-450">{inv.id}</td>
-                                <td className="p-4 font-semibold text-white">{inv.description}</td>
-                                <td className="p-4 text-zinc-300 font-mono">{inv.date}</td>
-                                <td className="p-4 font-bold text-cyan-400 font-mono">${inv.amount.toFixed(2)}</td>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-850 text-zinc-300">
+                            {invoices.map((inv) => (
+                              <tr key={inv.id} className="hover:bg-zinc-900/10">
+                                <td className="p-4 font-mono text-[11px] text-zinc-400">{inv.id}</td>
+                                <td className="p-4">{inv.date}</td>
+                                <td className="p-4">{inv.description}</td>
+                                <td className="p-4 font-semibold text-white">${inv.amount.toFixed(2)}</td>
                                 <td className="p-4">
-                                  <span className={`inline-flex px-2 py-0.5 rounded text-[9.5px] font-bold border capitalize ${
-                                    inv.status === 'paid' 
-                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                                      : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                                  <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-bold border capitalize ${
+                                    inv.status === 'paid'
+                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                      : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                                   }`}>
                                     {inv.status}
                                   </span>
                                 </td>
-                                <td className="p-4 text-right font-semibold">
-                                  {inv.status === 'unpaid' && user && (user.role === 'admin' || user.role === 'receptionist') ? (
+                                <td className="p-4 text-right">
+                                  {inv.status === 'unpaid' ? (
                                     <button
                                       onClick={() => handlePayInvoice(inv.id)}
-                                      className="text-xs text-emerald-400 hover:text-emerald-355 cursor-pointer font-bold"
+                                      className="py-1 px-3 bg-cyan-500 hover:bg-cyan-400 text-zinc-955 font-bold rounded-lg text-[10px] transition-colors cursor-pointer"
                                     >
-                                      Pay Bill
-                                    </button>
-                                  ) : inv.status === 'unpaid' && user && user.role === 'patient' ? (
-                                    <button
-                                      onClick={() => {
-                                        alert('Credit payment validation simulation successful! Toggling invoice status.');
-                                        handlePayInvoice(inv.id);
-                                      }}
-                                      className="text-[10px] py-1 px-2.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 hover:bg-emerald-900 font-bold transition-all cursor-pointer"
-                                    >
-                                      Pay Online
+                                      Collect Payment
                                     </button>
                                   ) : (
-                                    <span className="text-zinc-500 italic text-[11px]">Paid</span>
+                                    <span className="text-[10px] text-zinc-500">None</span>
                                   )}
                                 </td>
                               </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   </div>
 
-                  {/* Add invoice panel (Admins/Receptionists only) */}
-                  <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 space-y-6">
-                    {user && (user.role === 'admin' || user.role === 'receptionist') ? (
+                  {/* Create New Invoice panel */}
+                  <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 space-y-4">
+                    <h3 className="text-sm font-bold text-white">Generate Consultation Charge</h3>
+                    {['admin', 'receptionist'].includes(user?.role) ? (
                       <>
-                        <div className="space-y-1.5 border-b border-zinc-850 pb-3">
-                          <h3 className="text-sm font-bold text-white uppercase tracking-wider text-cyan-400">Generate Invoice Bill</h3>
-                          <p className="text-[10px] text-zinc-455">Add billing panels for consultations or clinical procedures.</p>
-                        </div>
-
                         {invoiceError && (
-                          <div className="bg-rose-955/40 border border-rose-800 text-rose-200 p-3 rounded-lg text-xs">
+                          <div className="bg-rose-950/40 border border-rose-800 text-rose-205 p-3 rounded-lg text-xs">
                             {invoiceError}
                           </div>
                         )}
-
                         {invoiceSuccess && (
-                          <div className="bg-emerald-950/40 border border-emerald-800 text-emerald-305 p-3 rounded-lg text-xs">
+                          <div className="bg-emerald-955/40 border border-emerald-800 text-emerald-300 p-3 rounded-lg text-xs">
                             {invoiceSuccess}
                           </div>
                         )}
-
                         <form onSubmit={handleCreateInvoice} className="space-y-4 text-xs font-sans">
                           <div className="space-y-1">
                             <label htmlFor="inv-desc" className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Billing Description *</label>
@@ -1089,8 +1157,8 @@ export default function PatientProfilePage({ params }) {
                               id="inv-desc"
                               type="text"
                               required
-                              placeholder="e.g. CBC Blood Chemistry Panel"
-                              className="w-full bg-zinc-950 border border-zinc-855 rounded-xl px-4 py-2.5 text-zinc-205 focus:outline-none"
+                              placeholder="e.g. Consulting Fee / General Consultation"
+                              className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-zinc-200 focus:outline-none"
                               value={invoiceDesc}
                               onChange={(e) => setInvoiceDesc(e.target.value)}
                             />
@@ -1105,7 +1173,7 @@ export default function PatientProfilePage({ params }) {
                               step="0.01"
                               required
                               placeholder="e.g. 75.00"
-                              className="w-full bg-zinc-950 border border-zinc-855 rounded-xl px-4 py-2.5 text-zinc-205 focus:outline-none font-mono"
+                              className="w-full bg-zinc-955 border border-zinc-855 rounded-xl px-4 py-2.5 text-zinc-205 focus:outline-none font-mono"
                               value={invoiceAmount}
                               onChange={(e) => setInvoiceAmount(e.target.value)}
                             />
@@ -1126,6 +1194,71 @@ export default function PatientProfilePage({ params }) {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {activeSubTab === 'messages' && (
+                <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl overflow-hidden h-[500px] flex flex-col animate-fadeIn">
+                  {/* Header */}
+                  <div className="p-4 border-b border-zinc-800 bg-zinc-900/30 flex justify-between items-center font-sans">
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Direct Chat Thread</h4>
+                      <p className="text-[10px] text-zinc-500">Secure conversation history with {patient?.name}</p>
+                    </div>
+                    <button
+                      onClick={fetchMessages}
+                      className="py-1 px-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-cyan-400 font-bold rounded text-[9px] cursor-pointer"
+                    >
+                      🔄 Sync Chat
+                    </button>
+                  </div>
+
+                  {/* Messages Area */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3" id="patient-detail-chat-container">
+                    {chatMessages.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-2 font-sans">
+                        <span className="text-3xl">💬</span>
+                        <p className="text-xs text-zinc-550">No messages exchanged yet.</p>
+                        <p className="text-[10px] text-zinc-600 max-w-xs">Ask a question or explain follow-up instructions to start your conversation thread.</p>
+                      </div>
+                    ) : (
+                      chatMessages.map((msg) => {
+                        const isMine = msg.senderId === user.id;
+                        return (
+                          <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[70%] p-3 rounded-2xl text-xs space-y-1 ${
+                              isMine
+                                ? 'bg-gradient-to-br from-cyan-600/90 to-indigo-650/90 text-white rounded-tr-none'
+                                : 'bg-zinc-800 text-zinc-200 rounded-tl-none border border-zinc-750'
+                            }`}>
+                              <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                              <span className="text-[8px] opacity-60 block text-right font-mono">
+                                {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Input Form */}
+                  <form onSubmit={sendMessage} className="p-4 border-t border-zinc-850 bg-zinc-950 flex items-center space-x-2 font-sans">
+                    <input
+                      type="text"
+                      value={newMessageText}
+                      onChange={(e) => setNewMessageText(e.target.value)}
+                      placeholder={`Send secure message to ${patient?.name}...`}
+                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 placeholder-zinc-550"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!newMessageText.trim() || sendingMsg}
+                      className="py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {sendingMsg ? '...' : 'Send'}
+                    </button>
+                  </form>
                 </div>
               )}
 

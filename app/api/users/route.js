@@ -17,11 +17,18 @@ export async function GET(request) {
     let filteredUsers = [];
 
     if (session.role === 'patient') {
-      const doctors = await getAllUsers('doctor');
-      const selfUser = await getUserById(session.id);
-      filteredUsers = [...doctors];
-      if (selfUser && !filteredUsers.some(u => u.id === selfUser.id)) {
-        filteredUsers.push(selfUser);
+      if (roleFilter === 'doctor') {
+        filteredUsers = await getAllUsers('doctor');
+      } else if (roleFilter === 'patient') {
+        const selfUser = await getUserById(session.id);
+        filteredUsers = selfUser ? [selfUser] : [];
+      } else {
+        const doctors = await getAllUsers('doctor');
+        const selfUser = await getUserById(session.id);
+        filteredUsers = [...doctors];
+        if (selfUser && !filteredUsers.some(u => u.id === selfUser.id)) {
+          filteredUsers.push(selfUser);
+        }
       }
     } else if (roleFilter) {
       filteredUsers = await getAllUsers(roleFilter);

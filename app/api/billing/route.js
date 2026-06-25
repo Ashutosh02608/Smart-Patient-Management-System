@@ -69,13 +69,31 @@ export async function POST(request) {
 export async function PUT(request) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'receptionist')) {
-      return NextResponse.json({ error: 'Forbidden: Only administrators or receptionists can update billing statuses' }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id, status } = await request.json();
     if (!id || !status) {
       return NextResponse.json({ error: 'Invoice ID and status are required' }, { status: 400 });
+    }
+
+    // Role check: admin/receptionist can do any status change.
+    // Patient can only change their own invoice status to 'paid'.
+    if (session.role !== 'admin' && session.role !== 'receptionist') {
+      if (session.role === 'patient') {
+        if (status !== 'paid') {
+          return NextResponse.json({ error: 'Forbidden: Patients can only mark invoices as paid' }, { status: 403 });
+        }
+        // Verify ownership
+        const patientInvoices = await getInvoices({ patientId: session.id });
+        const belongsToPatient = patientInvoices.some(inv => inv.id === id);
+        if (!belongsToPatient) {
+          return NextResponse.json({ error: 'Forbidden: You do not own this invoice' }, { status: 403 });
+        }
+      } else {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
     }
 
     const updates = { status };

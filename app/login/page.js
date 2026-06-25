@@ -58,8 +58,8 @@ export default function LoginPage() {
                 <span className="text-xs text-zinc-500">Uptime SLA</span>
               </div>
               <div className="bg-zinc-900/60 backdrop-blur-sm p-4 rounded-xl border border-zinc-800">
-                <span className="block text-2xl font-bold text-white">HIPAA</span>
-                <span className="text-xs text-zinc-500">Fully Compliant</span>
+                <span className="block text-2xl font-bold text-white">SSL</span>
+                <span className="text-xs text-zinc-500">End-to-End Encrypted</span>
               </div>
             </div>
           </div>
@@ -68,6 +68,16 @@ export default function LoginPage() {
 
       {/* Login Form Pane */}
       <div className="flex-1 flex flex-col justify-center items-center p-6 md:p-16 relative">
+        <div className="absolute top-6 left-6 md:top-8 md:left-8">
+          <Link
+            href="/"
+            className="flex items-center space-x-2 text-xs font-semibold text-zinc-400 hover:text-white transition-colors py-2 px-3 rounded-lg bg-zinc-900/50 hover:bg-zinc-800/50 border border-zinc-800/80 hover:border-zinc-700/80 backdrop-blur-sm"
+          >
+            <span>←</span>
+            <span>Back to Homepage</span>
+          </Link>
+        </div>
+
         <div className="w-full max-w-md space-y-8">
           <div className="space-y-2 text-center md:text-left">
             <h2 className="text-3xl font-bold tracking-tight text-white">Sign In</h2>

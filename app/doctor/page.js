@@ -35,11 +35,150 @@ function DoctorDashboardContent() {
   const [patientHistory, setPatientHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Secure Messaging States
+  const [receptionists, setReceptionists] = useState([]);
+  const [selectedChatUser, setSelectedChatUser] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [newMessageText, setNewMessageText] = useState('');
+  const [sendingMsg, setSendingMsg] = useState(false);
+
+  // Patient Explorer Tabs (Doctor POV)
+  const [subTab, setSubTab] = useState('history'); // 'history' | 'labs' | 'billing' | 'messages'
+  const [patientLabs, setPatientLabs] = useState([]);
+  const [patientInvoices, setPatientInvoices] = useState([]);
+  const [patientDetailsCache, setPatientDetailsCache] = useState({});
+
+  // Lab Test Ordering States
+  const [newLabTestName, setNewLabTestName] = useState('');
+  const [newLabRefRange, setNewLabRefRange] = useState('');
+  const [orderingLab, setOrderingLab] = useState(false);
+
+  // Lab Result Update States
+  const [editingLabReportId, setEditingLabReportId] = useState(null);
+  const [labResultValue, setLabResultValue] = useState('');
+  const [labResultStatus, setLabResultStatus] = useState('Normal');
+  const [labResultNotes, setLabResultNotes] = useState('');
+  const [updatingLab, setUpdatingLab] = useState(false);
+
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const fetchMessages = useCallback(async (patId) => {
+    if (!patId) return;
+    try {
+      const res = await fetch(`/api/messages?recipientId=${patId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages(data.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)));
+      }
+    } catch (err) {
+      console.error("Error fetching messages:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    let recipientId = null;
+    if (activeTab === 'messages' && selectedChatUser) {
+      recipientId = selectedChatUser.id;
+    } else if (activeTab === 'patients' && subTab === 'messages' && selectedPatientId) {
+      recipientId = selectedPatientId;
+    }
+
+    if (!recipientId) return;
+
+    setTimeout(() => {
+      fetchMessages(recipientId);
+    }, 0);
+
+    let interval;
+    const startPolling = () => {
+      if (interval) clearInterval(interval);
+      interval = setInterval(() => {
+        if (!document.hidden) {
+          fetchMessages(recipientId);
+        }
+      }, 3000);
+    };
+
+    startPolling();
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearInterval(interval);
+        interval = null;
+      } else {
+        fetchMessages(recipientId);
+        startPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeTab, subTab, selectedChatUser, selectedPatientId, fetchMessages]);
+
+  useEffect(() => {
+    const container = document.getElementById('doctor-chat-messages-container');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  const selectUserChat = (user) => {
+    setSelectedChatUser(user);
+    setChatMessages([]);
+    fetchMessages(user.id);
+  };
+
+  const refreshMessages = () => {
+    let recipientId = null;
+    if (activeTab === 'messages' && selectedChatUser) {
+      recipientId = selectedChatUser.id;
+    } else if (activeTab === 'patients' && subTab === 'messages' && selectedPatientId) {
+      recipientId = selectedPatientId;
+    }
+    if (recipientId) fetchMessages(recipientId);
+  };
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    let recipientId = null;
+    if (activeTab === 'messages' && selectedChatUser) {
+      recipientId = selectedChatUser.id;
+    } else if (activeTab === 'patients' && subTab === 'messages' && selectedPatientId) {
+      recipientId = selectedPatientId;
+    }
+
+    if (!newMessageText.trim() || !recipientId || sendingMsg) return;
+
+    setSendingMsg(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receiverId: recipientId,
+          content: newMessageText.trim()
+        })
+      });
+
+      if (res.ok) {
+        const newMsg = await res.json();
+        setChatMessages(prev => [...prev, newMsg]);
+        setNewMessageText('');
+      }
+    } catch (err) {
+      console.error("Error sending message:", err);
+    } finally {
+      setSendingMsg(false);
+    }
+  };
 
   useEffect(() => {
     if (tabParam) {
@@ -53,21 +192,24 @@ function DoctorDashboardContent() {
   const fetchData = useCallback(async () => {
     try {
       setLoadingData(true);
-      const [aptRes, patRes, recRes] = await Promise.all([
+      const [aptRes, patRes, recRes, recepRes] = await Promise.all([
         fetch('/api/appointments'),
         fetch('/api/users?role=patient'),
-        fetch('/api/records')
+        fetch('/api/records'),
+        fetch('/api/users?role=receptionist')
       ]);
 
-      if (aptRes.ok && patRes.ok && recRes.ok) {
+      if (aptRes.ok && patRes.ok && recRes.ok && recepRes.ok) {
         const apts = await aptRes.json();
         const pats = await patRes.json();
         const recs = await recRes.json();
+        const receps = await recepRes.json();
 
         // Sort by today's date & time (or simply date descending)
         setAppointments(apts.sort((a, b) => new Date(b.date) - new Date(a.date)));
         setPatients(pats);
         setRecords(recs);
+        setReceptionists(receps);
       }
     } catch (err) {
       console.error("Error loading doctor data:", err);
@@ -88,20 +230,157 @@ function DoctorDashboardContent() {
     };
   }, [user, fetchData]);
 
-  // Load Patient clinical history when clicked
+  // Load Patient clinical history, labs, and invoices when clicked
   const handleSelectPatient = async (patId) => {
     setSelectedPatientId(patId);
-    setLoadingHistory(true);
+    setEditingLabReportId(null);
+
+    const cached = patientDetailsCache[patId];
+    if (cached) {
+      setPatientHistory(cached.history);
+      setPatientLabs(cached.labs);
+      setPatientInvoices(cached.invoices);
+      setLoadingHistory(false);
+    } else {
+      setLoadingHistory(true);
+      setPatientHistory([]);
+      setPatientLabs([]);
+      setPatientInvoices([]);
+    }
+
     try {
-      const res = await fetch(`/api/records?patientId=${patId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setPatientHistory(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
+      const [recRes, labRes, billRes] = await Promise.all([
+        fetch(`/api/records?patientId=${patId}`),
+        fetch(`/api/lab-reports?patientId=${patId}`),
+        fetch(`/api/billing?patientId=${patId}`)
+      ]);
+
+      let historyData = [];
+      let labsData = [];
+      let billingData = [];
+
+      if (recRes.ok) {
+        const data = await recRes.json();
+        historyData = data.sort((a, b) => new Date(b.date) - new Date(a.date));
       }
+      if (labRes.ok) {
+        const data = await labRes.json();
+        labsData = data.sort((a, b) => new Date(b.date) - new Date(a.date));
+      }
+      if (billRes.ok) {
+        const data = await billRes.json();
+        billingData = data.sort((a, b) => new Date(b.date) - new Date(a.date));
+      }
+
+      setPatientHistory(historyData);
+      setPatientLabs(labsData);
+      setPatientInvoices(billingData);
+
+      setPatientDetailsCache(prev => ({
+        ...prev,
+        [patId]: {
+          history: historyData,
+          labs: labsData,
+          invoices: billingData
+        }
+      }));
     } catch (err) {
-      console.error("Error loading patient history:", err);
+      console.error("Error loading patient details:", err);
     } finally {
       setLoadingHistory(false);
+    }
+  };
+
+  // Order Lab Test Handler
+  const handleOrderLabTest = async (e) => {
+    e.preventDefault();
+    if (!newLabTestName.trim() || !selectedPatientId) return;
+
+    setOrderingLab(true);
+    try {
+      const res = await fetch('/api/lab-reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId: selectedPatientId,
+          testName: newLabTestName.trim(),
+          referenceRange: newLabRefRange.trim() || 'Pending verification'
+        })
+      });
+
+      if (res.ok) {
+        const newReport = await res.json();
+        setPatientLabs(prev => {
+          const next = [newReport, ...prev];
+          setPatientDetailsCache(cache => {
+            if (!cache[selectedPatientId]) return cache;
+            return {
+              ...cache,
+              [selectedPatientId]: { ...cache[selectedPatientId], labs: next }
+            };
+          });
+          return next;
+        });
+        setNewLabTestName('');
+        setNewLabRefRange('');
+        alert('Lab test successfully ordered!');
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to order lab test.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to connect to server.');
+    } finally {
+      setOrderingLab(false);
+    }
+  };
+
+  // Update Lab Findings Handler
+  const handleUpdateLabResult = async (e) => {
+    e.preventDefault();
+    if (!editingLabReportId) return;
+
+    setUpdatingLab(true);
+    try {
+      const res = await fetch('/api/lab-reports', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingLabReportId,
+          result: labResultValue.trim(),
+          status: labResultStatus,
+          notes: labResultNotes.trim()
+        })
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        setPatientLabs(prev => {
+          const next = prev.map(l => l.id === updated.id ? updated : l);
+          setPatientDetailsCache(cache => {
+            if (!cache[selectedPatientId]) return cache;
+            return {
+              ...cache,
+              [selectedPatientId]: { ...cache[selectedPatientId], labs: next }
+            };
+          });
+          return next;
+        });
+        setEditingLabReportId(null);
+        setLabResultValue('');
+        setLabResultStatus('Normal');
+        setLabResultNotes('');
+        alert('Lab findings updated successfully!');
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to update lab findings.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to connect to server.');
+    } finally {
+      setUpdatingLab(false);
     }
   };
 
@@ -255,10 +534,11 @@ function DoctorDashboardContent() {
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
       searchPlaceholder={
-        activeTab === 'dashboard' ? 'Search today\'s agenda...' :
+        activeTab === 'dashboard' ? "Search today's agenda..." :
         activeTab === 'patients' ? 'Search patient directory...' :
         activeTab === 'appointments' ? 'Search consultation queue...' :
         activeTab === 'reports' ? 'Search diagnosis history...' :
+        activeTab === 'messages' ? 'Search directory to chat...' :
         'Search workspace settings...'
       }
     >
@@ -629,55 +909,383 @@ function DoctorDashboardContent() {
                           ))}
                         </div>
 
-                        {/* Historical diagnoses timeline */}
-                        <div className="space-y-4">
-                          <h4 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Diagnosis Timeline</h4>
-                          {patientHistory.length === 0 ? (
-                            <p className="text-xs text-zinc-550 italic">No past consultation records on record.</p>
-                          ) : (
-                            <div className="space-y-3">
-                              {patientHistory.map((rec) => (
-                                <div key={rec.id} className="bg-zinc-950 border border-zinc-850 p-5 rounded-xl space-y-3">
-                                  <div className="flex justify-between items-center text-xs">
-                                    <div>
-                                      <strong className="text-white text-xs block">{rec.diagnosis}</strong>
-                                      <span className="text-zinc-500 block text-[9px] mt-0.5">Consulted by {rec.doctorName} on {rec.date}</span>
-                                    </div>
-                                    <span className="text-[9px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
-                                      {rec.id}
-                                    </span>
-                                  </div>
-                                  {(rec.symptoms || rec.treatment) && (
-                                    <div className="flex flex-wrap gap-2 text-[10px] pt-1">
-                                      {rec.symptoms && (
-                                        <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-medium">
-                                          🤒 Symptoms: {rec.symptoms}
-                                        </span>
-                                      )}
-                                      {rec.treatment && (
-                                        <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-medium">
-                                          💊 Treatment: {rec.treatment}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
-                                  <p className="text-xs text-zinc-355 leading-normal">{rec.notes}</p>
-                                  
-                                  {rec.prescription && rec.prescription.length > 0 && (
-                                    <div className="pt-2 border-t border-zinc-900 grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px] text-zinc-400">
-                                      {rec.prescription.map((rx, idx) => (
-                                        <div key={idx} className="bg-zinc-900/50 p-2 rounded-lg border border-zinc-850/50">
-                                          <strong className="text-zinc-350">💊 {rx.drug}</strong> &mdash; <span className="font-mono text-cyan-400">{rx.dosage}</span>
-                                          <span className="block text-[9px] text-zinc-500 italic mt-0.5">{rx.instructions} ({rx.duration})</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                        {/* Internal Sub-navigation Tabs */}
+                        <div className="flex space-x-2 border-b border-zinc-800 pb-2">
+                          <button
+                            type="button"
+                            onClick={() => setSubTab('history')}
+                            className={`py-1.5 px-3 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                              subTab === 'history'
+                                ? 'bg-zinc-800 text-cyan-400 border border-zinc-700 shadow-sm'
+                                : 'text-zinc-500 hover:text-zinc-350'
+                            }`}
+                          >
+                            📝 Medical History
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSubTab('labs')}
+                            className={`py-1.5 px-3 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                              subTab === 'labs'
+                                ? 'bg-zinc-800 text-cyan-400 border border-zinc-700 shadow-sm'
+                                : 'text-zinc-500 hover:text-zinc-350'
+                            }`}
+                          >
+                            🔬 Lab Reports ({patientLabs.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSubTab('billing')}
+                            className={`py-1.5 px-3 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                              subTab === 'billing'
+                                ? 'bg-zinc-800 text-cyan-400 border border-zinc-700 shadow-sm'
+                                : 'text-zinc-500 hover:text-zinc-350'
+                            }`}
+                          >
+                            💳 Billing Ledger ({patientInvoices.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSubTab('messages')}
+                            className={`py-1.5 px-3 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                              subTab === 'messages'
+                                ? 'bg-zinc-800 text-cyan-400 border border-zinc-700 shadow-sm'
+                                : 'text-zinc-500 hover:text-zinc-350'
+                            }`}
+                          >
+                            💬 Secure Chat
+                          </button>
                         </div>
+
+                        {/* SUBTAB 1: MEDICAL HISTORY */}
+                        {subTab === 'history' && (
+                          <div className="space-y-4">
+                            <h4 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Diagnosis Timeline</h4>
+                            {patientHistory.length === 0 ? (
+                              <p className="text-xs text-zinc-550 italic">No past consultation records on record.</p>
+                            ) : (
+                              <div className="space-y-3">
+                                {patientHistory.map((rec) => (
+                                  <div key={rec.id} className="bg-zinc-950 border border-zinc-850 p-5 rounded-xl space-y-3">
+                                    <div className="flex justify-between items-center text-xs">
+                                      <div>
+                                        <strong className="text-white text-xs block">{rec.diagnosis}</strong>
+                                        <span className="text-zinc-550 block text-[9px] mt-0.5">Consulted by {rec.doctorName} on {rec.date}</span>
+                                      </div>
+                                      <span className="text-[9px] font-mono text-zinc-500 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
+                                        {rec.id}
+                                      </span>
+                                    </div>
+                                    {(rec.symptoms || rec.treatment) && (
+                                      <div className="flex flex-wrap gap-2 text-[10px] pt-1">
+                                        {rec.symptoms && (
+                                          <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-medium">
+                                            🤒 Symptoms: {rec.symptoms}
+                                          </span>
+                                        )}
+                                        {rec.treatment && (
+                                          <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-medium">
+                                            💊 Treatment: {rec.treatment}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    <p className="text-xs text-zinc-350 leading-normal">{rec.notes}</p>
+                                    
+                                    {rec.prescription && rec.prescription.length > 0 && (
+                                      <div className="pt-2 border-t border-zinc-900 grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px] text-zinc-400">
+                                        {rec.prescription.map((rx, idx) => (
+                                          <div key={idx} className="bg-zinc-900/50 p-2 rounded-lg border border-zinc-850/50">
+                                            <strong className="text-zinc-300">💊 {rx.drug}</strong> &mdash; <span className="font-mono text-cyan-400">{rx.dosage}</span>
+                                            <span className="block text-[9px] text-zinc-505 italic mt-0.5">{rx.instructions} ({rx.duration})</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* SUBTAB 2: LAB REPORTS */}
+                        {subTab === 'labs' && (
+                          <div className="space-y-6">
+                            {/* Order Lab Form */}
+                            <div className="bg-zinc-950 border border-zinc-850 p-5 rounded-2xl space-y-4 font-sans">
+                              <h4 className="text-xs font-bold text-white">Order New Laboratory Test</h4>
+                              <form onSubmit={handleOrderLabTest} className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">Test Name *</label>
+                                  <input
+                                    type="text"
+                                    required
+                                    placeholder="e.g. Lipid Profile, Complete Blood Count"
+                                    value={newLabTestName}
+                                    onChange={(e) => setNewLabTestName(e.target.value)}
+                                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">Reference Range (Optional)</label>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. 13.5 - 17.5 g/dL"
+                                    value={newLabRefRange}
+                                    onChange={(e) => setNewLabRefRange(e.target.value)}
+                                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                                  />
+                                </div>
+                                <div className="md:col-span-2 flex justify-end">
+                                  <button
+                                    type="submit"
+                                    disabled={orderingLab}
+                                    className="py-2 px-4 bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
+                                  >
+                                    {orderingLab ? 'Ordering...' : 'Order Test'}
+                                  </button>
+                                </div>
+                              </form>
+                            </div>
+
+                            {/* Lab Edit Result Form */}
+                            {editingLabReportId && (
+                              <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl space-y-4 font-sans animate-fadeIn">
+                                <div className="flex justify-between items-center">
+                                  <h4 className="text-xs font-bold text-cyan-405">Enter Lab Results & Findings</h4>
+                                  <button
+                                    onClick={() => setEditingLabReportId(null)}
+                                    className="text-zinc-500 hover:text-white text-sm"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                                <form onSubmit={handleUpdateLabResult} className="space-y-3">
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div className="space-y-1">
+                                      <label className="text-[9px] font-bold uppercase tracking-wider text-zinc-405">Measured Value *</label>
+                                      <input
+                                        type="text"
+                                        required
+                                        placeholder="e.g. 14.2 g/dL or Positive"
+                                        value={labResultValue}
+                                        onChange={(e) => setLabResultValue(e.target.value)}
+                                        className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <label className="text-[9px] font-bold uppercase tracking-wider text-zinc-405">Diagnosis Status *</label>
+                                      <select
+                                        value={labResultStatus}
+                                        onChange={(e) => setLabResultStatus(e.target.value)}
+                                        className="w-full bg-zinc-955 border border-zinc-850 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                                      >
+                                        <option value="Normal">Normal</option>
+                                        <option value="High">High</option>
+                                        <option value="Low">Low</option>
+                                        <option value="Pending">Pending</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-bold uppercase tracking-wider text-zinc-405">Pathologist Comments / Notes</label>
+                                    <textarea
+                                      placeholder="Explain diagnostic deviations or follow-up suggestions..."
+                                      value={labResultNotes}
+                                      onChange={(e) => setLabResultNotes(e.target.value)}
+                                      className="w-full bg-zinc-950 border border-zinc-855 rounded-xl px-3 py-2 text-xs text-white h-20 focus:outline-none resize-none font-sans"
+                                    />
+                                  </div>
+                                  <div className="flex justify-end">
+                                    <button
+                                      type="submit"
+                                      disabled={updatingLab}
+                                      className="py-2 px-4 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer"
+                                    >
+                                      {updatingLab ? 'Publishing...' : 'Publish Findings'}
+                                    </button>
+                                  </div>
+                                </form>
+                              </div>
+                            )}
+
+                            {/* Reports List */}
+                            <div className="space-y-3">
+                              <h4 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Lab Test History</h4>
+                              {patientLabs.length === 0 ? (
+                                <p className="text-xs text-zinc-550 italic">No lab findings ordered for this patient.</p>
+                              ) : (
+                                patientLabs.map((lab) => {
+                                  const statusColors = {
+                                    normal: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+                                    high: 'bg-rose-500/10 text-rose-455 border-rose-500/20',
+                                    low: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+                                    pending: 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                                  };
+                                  return (
+                                    <div key={lab.id} className="bg-zinc-950 border border-zinc-850 p-4 rounded-xl space-y-2 font-sans hover:border-zinc-800 transition-colors">
+                                      <div className="flex justify-between items-start">
+                                        <div>
+                                          <strong className="text-white text-xs block">{lab.testName}</strong>
+                                          <span className="text-[9px] text-zinc-550 mt-0.5 block">Ordered on {lab.date} &bull; ID: {lab.id}</span>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                          <button
+                                            onClick={() => {
+                                              setEditingLabReportId(lab.id);
+                                              setLabResultValue(lab.result || '');
+                                              setLabResultStatus(lab.status || 'Normal');
+                                              setLabResultNotes(lab.notes || '');
+                                            }}
+                                            className="py-0.5 px-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-cyan-405 font-bold rounded text-[9px] cursor-pointer"
+                                          >
+                                            Update Results
+                                          </button>
+                                          <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-bold border capitalize ${
+                                            statusColors[lab.status?.toLowerCase()] || statusColors.pending
+                                          }`}>
+                                            {lab.status}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-4 bg-zinc-900/30 p-2.5 rounded-lg border border-zinc-850/50 text-[10px]">
+                                        <div>
+                                          <span className="text-zinc-550 block">Result</span>
+                                          <strong className="text-white text-xs font-mono">{lab.result || 'Pending Result'}</strong>
+                                        </div>
+                                        <div>
+                                          <span className="text-zinc-550 block">Reference Range</span>
+                                          <span className="text-zinc-300 font-mono">{lab.referenceRange}</span>
+                                        </div>
+                                      </div>
+                                      {lab.notes && (
+                                        <p className="text-[10px] text-zinc-400 bg-zinc-900/10 p-2 rounded border border-zinc-900 italic">
+                                          Notes: {lab.notes}
+                                        </p>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SUBTAB 3: BILLING */}
+                        {subTab === 'billing' && (
+                          <div className="space-y-4">
+                            <h4 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Account Billing Invoices</h4>
+                            <div className="grid grid-cols-2 gap-4 bg-zinc-950 p-4 border border-zinc-850 rounded-xl text-center text-xs">
+                              <div>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase block">Outstanding Balance</span>
+                                <span className="text-sm font-extrabold text-amber-400 font-sans">
+                                  ${patientInvoices.filter(i => i.status === 'unpaid').reduce((acc, i) => acc + i.amount, 0).toFixed(2)}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase block">Total Paid Consultation Fees</span>
+                                <span className="text-sm font-extrabold text-emerald-450 font-sans">
+                                  ${patientInvoices.filter(i => i.status === 'paid').reduce((acc, i) => acc + i.amount, 0).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              {patientInvoices.length === 0 ? (
+                                <p className="text-xs text-zinc-550 italic">No billing history recorded for this patient.</p>
+                              ) : (
+                                patientInvoices.map((inv) => (
+                                  <div key={inv.id} className="bg-zinc-950 border border-zinc-850 p-4 rounded-xl flex justify-between items-center text-xs font-sans hover:border-zinc-800 transition-colors">
+                                    <div className="space-y-0.5">
+                                      <strong className="text-white block">{inv.description}</strong>
+                                      <span className="text-[9px] text-zinc-500 block">Date: {inv.date} &bull; ID: {inv.id}</span>
+                                    </div>
+                                    <div className="flex items-center space-x-3">
+                                      <span className="font-mono text-zinc-200 font-bold">${inv.amount.toFixed(2)}</span>
+                                      <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-bold border capitalize ${
+                                        inv.status === 'paid'
+                                          ? 'bg-emerald-500/10 text-emerald-450 border-emerald-500/20'
+                                          : 'bg-amber-500/10 text-amber-455 border-amber-500/20'
+                                      }`}>
+                                        {inv.status}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SUBTAB 4: SECURE MESSAGING */}
+                        {subTab === 'messages' && (
+                          <div className="space-y-4 font-sans">
+                            <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
+                              <div>
+                                <h4 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Direct Secure Chat</h4>
+                                <p className="text-[10px] text-zinc-500 mt-0.5">Consultation chat history with patient</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={refreshMessages}
+                                className="py-1 px-2.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 hover:border-zinc-700 text-zinc-350 hover:text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer"
+                              >
+                                🔄 Sync Chat
+                              </button>
+                            </div>
+
+                            {/* Chat Messages Log */}
+                            <div 
+                              className="h-[350px] overflow-y-auto p-4 space-y-3 bg-zinc-950/80 border border-zinc-850 rounded-2xl"
+                              id="doctor-chat-messages-container"
+                            >
+                              {chatMessages.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
+                                  <span className="text-2xl">💬</span>
+                                  <p className="text-xs text-zinc-500">No messages exchanged yet.</p>
+                                  <p className="text-[9px] text-zinc-650 max-w-xs">Send a direct message below to start the conversation.</p>
+                                </div>
+                              ) : (
+                                chatMessages.map((msg) => {
+                                  const isMine = msg.senderId === user.id;
+                                  return (
+                                    <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                                      <div className={`max-w-[75%] p-3 rounded-2xl text-xs space-y-1 ${
+                                        isMine
+                                          ? 'bg-gradient-to-br from-cyan-600/90 to-indigo-650/90 text-white rounded-tr-none'
+                                          : 'bg-zinc-800 text-zinc-250 rounded-tl-none border border-zinc-750'
+                                      }`}>
+                                        <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                        <span className="text-[8px] opacity-65 block text-right font-mono">
+                                          {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+
+                            {/* Input Form */}
+                            <form onSubmit={sendMessage} className="flex items-center space-x-2">
+                              <input
+                                type="text"
+                                value={newMessageText}
+                                onChange={(e) => setNewMessageText(e.target.value)}
+                                placeholder="Type your secure message here..."
+                                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 placeholder-zinc-550"
+                              />
+                              <button
+                                type="submit"
+                                disabled={!newMessageText.trim() || sendingMsg}
+                                className="py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-zinc-955 font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                {sendingMsg ? '...' : 'Send'}
+                              </button>
+                            </form>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -938,6 +1546,155 @@ function DoctorDashboardContent() {
                         <span>Saturday Consultation Hours (Off)</span>
                       </label>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'messages' && (
+                <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl overflow-hidden h-[600px] flex animate-fadeIn">
+                  {/* Left Clinic Directory Panel */}
+                  <div className="w-1/3 border-r border-zinc-800 flex flex-col h-full bg-zinc-950/20">
+                    <div className="p-4 border-b border-zinc-800">
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider text-indigo-400">Clinic Directory</h3>
+                      <p className="text-[9px] text-zinc-500 mt-0.5">Select a staff member or patient to chat</p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2 space-y-4">
+                      {/* Receptionists (Front Desk) Section */}
+                      <div className="space-y-1">
+                        <span className="text-[9px] uppercase tracking-wider font-bold text-cyan-400/80 px-2 block">🔔 Front Desk Staff</span>
+                        <div className="space-y-0.5">
+                          {receptionists.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase())).map((recep) => {
+                            const isSelected = selectedChatUser?.id === recep.id;
+                            return (
+                              <button
+                                key={recep.id}
+                                onClick={() => selectUserChat(recep)}
+                                className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 border-cyan-500/30 text-cyan-400 font-semibold shadow-sm'
+                                    : 'bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800/40 hover:text-white'
+                                }`}
+                              >
+                                <strong className="text-xs block font-bold">{recep.name}</strong>
+                                <span className="text-[9px] text-zinc-555 block mt-0.5">{recep.email}</span>
+                              </button>
+                            );
+                          })}
+                          {receptionists.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                            <span className="text-[9px] text-zinc-600 px-2 block italic">No front desk staff found</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Patients Section */}
+                      <div className="space-y-1">
+                        <span className="text-[9px] uppercase tracking-wider font-bold text-indigo-400/80 px-2 block">👤 Patients</span>
+                        <div className="space-y-0.5">
+                          {patients.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase())).map((pat) => {
+                            const isSelected = selectedChatUser?.id === pat.id;
+                            return (
+                              <button
+                                key={pat.id}
+                                onClick={() => selectUserChat(pat)}
+                                className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 border-cyan-500/30 text-cyan-400 font-semibold shadow-sm'
+                                    : 'bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800/40 hover:text-white'
+                                }`}
+                              >
+                                <strong className="text-xs block font-bold">{pat.name}</strong>
+                                <span className="text-[9px] font-mono text-zinc-555 block mt-0.5">ID: {pat.id.substring(0, 8)}...</span>
+                              </button>
+                            );
+                          })}
+                          {patients.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                            <span className="text-[9px] text-zinc-600 px-2 block italic">No patients found</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Chat Panel */}
+                  <div className="flex-1 flex flex-col h-full bg-zinc-950/40">
+                    {selectedChatUser ? (
+                      <>
+                        {/* Header */}
+                        <div className="p-4 border-b border-zinc-800 bg-zinc-900/30 flex justify-between items-center font-sans">
+                          <div>
+                            <h4 className="text-xs font-bold text-white flex items-center space-x-1.5">
+                              <span>{selectedChatUser.role === 'receptionist' ? '🔔' : '👤'}</span>
+                              <span>{selectedChatUser.name}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-850 text-zinc-400 capitalize font-medium">{selectedChatUser.role === 'receptionist' ? 'Front Desk' : 'Patient'}</span>
+                            </h4>
+                            <p className="text-[10px] text-zinc-550 mt-0.5 font-sans">Secure messaging thread &bull; {selectedChatUser.email}</p>
+                          </div>
+                          <button
+                            onClick={refreshMessages}
+                            className="py-1.5 px-3 bg-zinc-900 hover:bg-zinc-855 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 rounded-lg text-[9px] font-bold cursor-pointer transition-all"
+                          >
+                            🔄 Sync Chat
+                          </button>
+                        </div>
+
+                        {/* Messages Area */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3" id="doctor-chat-messages-container">
+                          {chatMessages.length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-2 font-sans">
+                              <span className="text-3xl">💬</span>
+                              <p className="text-xs text-zinc-500">No messages exchanged yet.</p>
+                              <p className="text-[10px] text-zinc-650 max-w-xs">Send a secure message below to initiate communication.</p>
+                            </div>
+                          ) : (
+                            chatMessages.map((msg) => {
+                              const isMine = msg.senderId === user.id;
+                              return (
+                                <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[70%] p-3 rounded-2xl text-xs space-y-1 ${
+                                    isMine
+                                      ? 'bg-gradient-to-br from-cyan-600/90 to-indigo-650/90 text-white rounded-tr-none'
+                                      : 'bg-zinc-800 text-zinc-250 rounded-tl-none border border-zinc-750'
+                                  }`}>
+                                    <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                    <span className="text-[8px] opacity-65 block text-right font-mono">
+                                      {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {/* Input Area */}
+                        <form onSubmit={sendMessage} className="p-4 border-t border-zinc-850 bg-zinc-950 flex items-center space-x-2 font-sans">
+                          <input
+                            type="text"
+                            value={newMessageText}
+                            onChange={(e) => setNewMessageText(e.target.value)}
+                            placeholder={`Send secure message to ${selectedChatUser.name}...`}
+                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 placeholder-zinc-550"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!newMessageText.trim() || sendingMsg}
+                            className="py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-zinc-955 font-bold rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {sendingMsg ? '...' : 'Send'}
+                          </button>
+                        </form>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center text-center p-8 space-y-3 font-sans">
+                        <div className="h-16 w-16 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-2xl text-zinc-500 shadow-inner">
+                          💬
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-white">Clinic Secure Messaging</h4>
+                          <p className="text-xs text-zinc-550 max-w-sm mt-1">Select a patient or front desk receptionist from the list to start a secure chat thread.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
