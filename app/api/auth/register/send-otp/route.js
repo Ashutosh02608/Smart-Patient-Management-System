@@ -48,10 +48,12 @@ export async function POST(request) {
     // SMTP Email configurations
     const smtpHost = process.env.SMTP_HOST;
     const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
-    const smtpSecure = process.env.SMTP_SECURE === 'true'; // true for port 465, false for other ports
+    const smtpSecure = process.env.SMTP_SECURE === 'true' || smtpPort === 465;
     const smtpUser = process.env.SMTP_USER;
-    const smtpPassword = process.env.SMTP_PASSWORD;
-    const smtpFrom = process.env.SMTP_FROM || '"CarePulse Healthcare" <onboarding@resend.dev>';
+    const rawPassword = process.env.SMTP_PASSWORD || process.env.SMTP_PASS || '';
+    const smtpPassword = rawPassword.replace(/\s+/g, ''); // strip any accidental whitespace in app passwords
+    const defaultFrom = smtpUser ? `"CarePulse Healthcare" <${smtpUser}>` : '"CarePulse Healthcare" <onboarding@resend.dev>';
+    const smtpFrom = process.env.SMTP_FROM || defaultFrom;
 
     // Beautiful HTML template
     const emailHtml = `
@@ -99,6 +101,9 @@ export async function POST(request) {
         console.log(`[CarePulse OTP Service] Sent email via custom SMTP to ${email}`);
       } catch (emailError) {
         console.error("[CarePulse OTP Service] Custom SMTP email sending error:", emailError);
+        return NextResponse.json({ 
+          error: `Failed to deliver verification email: ${emailError.message}. Please check your SMTP configuration.` 
+        }, { status: 500 });
       }
     } else {
       // Offline / Developer Mock Ethereal Fallback

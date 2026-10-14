@@ -9,6 +9,7 @@ Visit the live application at: **[smart-patient-management-system-ochre.vercel.a
 
 ## 🚀 Key Features
 
+* **✨ AI Pre-Consultation Symptom Triage & Clinical Assistant**: Powered by **Google Gemini 2.5 Flash** (with fallback clinical rule engine). Patients can describe symptoms in plain text to receive clinical urgency scores (Routine, Priority, Emergency), specialty recommendations, and automated pre-consultation handover briefs attached directly to their appointment for the doctor.
 * **🔑 Role-Based Access Control (RBAC):** Custom interfaces, dashboard structures, and API route authorizations tailored for 4 roles: System Administrator, Doctor, Receptionist, and Patient.
 * **📅 Interactive Booking Calendar:** Features a 10-day timeline slot selector that queries existing visits dynamically and disables booked slot times for the selected physician in real-time.
 * **💳 Billing & Card/UPI Payment Simulator:** Generates invoices for consultation fees. Patients can verify ledger items and pay outstanding balances directly using a glassmorphic mock Checkout Portal (supporting simulated 16-digit credit card processing and UPI scan codes).
@@ -65,12 +66,16 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-public-anon-key
 # Server-side Secret API Key (Bypasses Row-Level Security)
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 
+# Google Gemini AI API Key (Optional: for live AI Clinical Triage & Health Assistant)
+GEMINI_API_KEY=your-gemini-api-key
+
 # Nodemailer SMTP Configuration
 SMTP_HOST=smtp.ethereal.email
 SMTP_PORT=587
 SMTP_USER=your-smtp-username
-SMTP_PASS=your-smtp-password
+SMTP_PASSWORD=your-smtp-password
 ```
+*(If no Gemini API key is configured, CarePulse seamlessly falls back to its built-in clinical rule engine).*
 *(If no SMTP host is configured, signup OTP emails will default to simulated development deliveries displaying preview inbox links in the local terminal console).*
 
 ### 2. Database Schema SQL

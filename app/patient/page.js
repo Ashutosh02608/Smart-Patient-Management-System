@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/components/AuthProvider';
 import { useSearchParams } from 'next/navigation';
+import AiSymptomTriage from '@/components/AiSymptomTriage';
 
 const TIME_SLOTS = [
   '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
@@ -542,6 +543,7 @@ function PatientDashboardContent() {
           onSearchChange={setSearchQuery}
           searchPlaceholder={
             activeTab === 'dashboard' ? 'Search scheduled slots...' :
+            activeTab === 'ai-triage' ? 'Search clinical guidance and symptoms...' :
             activeTab === 'patients' ? 'Search clinical doctors...' :
             activeTab === 'appointments' ? 'Search consultation logs...' :
             activeTab === 'reports' ? 'Search medical records...' :
@@ -589,6 +591,26 @@ function PatientDashboardContent() {
                         <span>📅 Book Consultation</span>
                       </button>
                     </div>
+                  </div>
+
+                  {/* AI Assistant Quick Action Banner */}
+                  <div className="relative overflow-hidden bg-gradient-to-r from-cyan-950/40 via-zinc-900 to-indigo-950/40 border border-cyan-500/20 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-cyan-500/5">
+                    <div className="space-y-1">
+                      <div className="inline-flex items-center space-x-1.5 text-cyan-400 text-xs font-bold">
+                        <span className="animate-pulse">✨</span>
+                        <span>CarePulse AI Clinical Assistant</span>
+                      </div>
+                      <h3 className="text-sm font-bold text-white">Feeling unwell? Check symptoms & prepare for your consult</h3>
+                      <p className="text-xs text-zinc-400 max-w-xl">
+                        Get an instant AI urgency rating, specialty match, and prepare a structured pre-consultation brief for your doctor.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('ai-triage')}
+                      className="py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-xs shadow-lg shadow-cyan-500/10 active:scale-[0.98] transition-all cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      Start AI Triage &rarr;
+                    </button>
                   </div>
 
                   {/* Scheduled Appointments Table */}
@@ -713,9 +735,19 @@ function PatientDashboardContent() {
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                     <div className="lg:col-span-2 bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 space-y-6">
-                      <div className="space-y-1">
-                        <h3 className="text-sm font-bold text-white">Schedule Doctor Appointment Booking</h3>
-                        <p className="text-xs text-zinc-450">Select doctor, set date/time slots, and describe symptoms.</p>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <h3 className="text-sm font-bold text-white">Schedule Doctor Appointment Booking</h3>
+                          <p className="text-xs text-zinc-450">Select doctor, set date/time slots, and describe symptoms.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('ai-triage')}
+                          className="py-1.5 px-3 rounded-xl bg-cyan-950/60 border border-cyan-800 text-cyan-300 hover:bg-cyan-900/60 text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer whitespace-nowrap self-start sm:self-auto"
+                        >
+                          <span className="animate-pulse">✨</span>
+                          <span>Pre-fill with AI Triage</span>
+                        </button>
                       </div>
 
                       {bookingError && (
@@ -1286,6 +1318,19 @@ function PatientDashboardContent() {
                     )}
                   </div>
                 </div>
+              )}
+
+              {/* AI HEALTH ASSISTANT / SYMPTOM TRIAGE TAB */}
+              {activeTab === 'ai-triage' && (
+                <AiSymptomTriage
+                  user={user}
+                  doctors={doctors}
+                  onSelectDoctorForBooking={(docId, prefilledReason) => {
+                    if (docId) setBookDoctorId(docId);
+                    if (prefilledReason) setBookReason(prefilledReason);
+                    setActiveTab('appointments');
+                  }}
+                />
               )}
 
               {/* SETTINGS / PROFILE TAB */}

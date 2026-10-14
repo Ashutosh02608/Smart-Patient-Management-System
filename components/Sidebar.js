@@ -13,6 +13,7 @@ export default function Sidebar({ user, activeTab, onTabChange, badges = {} }) {
     ...(user?.role !== 'patient' ? [{ id: 'calendar', label: 'Calendar', icon: '🗓️', badgeKey: null }] : []),
     { id: 'reports', label: 'Reports', icon: '📝', badgeKey: 'reports' },
     ...(user?.role === 'patient' ? [
+      { id: 'ai-triage', label: 'AI Health Assistant', icon: '✨', badgeKey: null },
       { id: 'billing', label: 'Billing', icon: '💳', badgeKey: null },
       { id: 'lab-reports', label: 'Lab Reports', icon: '🔬', badgeKey: null }
     ] : []),

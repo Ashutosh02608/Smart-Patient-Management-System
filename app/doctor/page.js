@@ -30,6 +30,13 @@ function DoctorDashboardContent() {
   const [consultationSuccess, setConsultationSuccess] = useState('');
   const [savingConsultation, setSavingConsultation] = useState(false);
 
+  // AI Clinical Co-Pilot & Safety States
+  const [safetyLoading, setSafetyLoading] = useState(false);
+  const [safetyResult, setSafetyResult] = useState(null);
+  const [soapLoading, setSoapLoading] = useState(false);
+  const [soapPreview, setSoapPreview] = useState(null);
+  const [soapModalOpen, setSoapModalOpen] = useState(false);
+
   // Patient Explorer States
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [patientHistory, setPatientHistory] = useState([]);
@@ -420,6 +427,97 @@ function DoctorDashboardContent() {
     setPrescriptionList(prescriptionList.filter((_, i) => i !== idx));
   };
 
+  // Prescription Safety Guard live analysis
+  useEffect(() => {
+    if (!activeConsultation || prescriptionList.length === 0) {
+      setSafetyResult(null);
+      return;
+    }
+
+    let active = true;
+    const checkSafety = async () => {
+      setSafetyLoading(true);
+      try {
+        const currentPatient = patients.find(p => p.id === activeConsultation.patientId);
+        const res = await fetch('/api/ai/clinical-copilot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'check_safety',
+            patientId: activeConsultation.patientId,
+            patientAllergies: currentPatient?.profile?.allergies || '',
+            newPrescriptions: prescriptionList
+          })
+        });
+
+        if (res.ok && active) {
+          const data = await res.json();
+          setSafetyResult(data);
+        }
+      } catch (err) {
+        console.error("Prescription safety check error:", err);
+      } finally {
+        if (active) setSafetyLoading(false);
+      }
+    };
+
+    const timer = setTimeout(checkSafety, 350);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [prescriptionList, activeConsultation, patients]);
+
+  // AI SOAP Note Generation
+  const handleGenerateSoapNote = async () => {
+    if (!diagnosis && !symptoms) {
+      alert('Please fill in at least the Diagnosis or Symptoms field before generating a SOAP note.');
+      return;
+    }
+
+    setSoapLoading(true);
+    try {
+      const currentPatient = patients.find(p => p.id === activeConsultation?.patientId);
+      const res = await fetch('/api/ai/clinical-copilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate_soap',
+          patientName: activeConsultation?.patientName || 'Patient',
+          diagnosis,
+          symptoms,
+          treatment,
+          doctorRoughNotes: notes,
+          prescriptions: prescriptionList,
+          allergies: currentPatient?.profile?.allergies || 'None reported'
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setSoapPreview(data);
+        setSoapModalOpen(true);
+      } else {
+        alert('Failed to generate SOAP note. Please retry.');
+      }
+    } catch (err) {
+      console.error("SOAP generation error:", err);
+      alert('Network error while generating SOAP note.');
+    } finally {
+      setSoapLoading(false);
+    }
+  };
+
+  const handleApplySoapNote = () => {
+    if (!soapPreview) return;
+    setNotes(soapPreview.formattedFullNote);
+    if (!treatment && soapPreview.plan) {
+      const firstLine = soapPreview.plan.split('\n')[0].replace(/^\d+\.\s*/, '');
+      setTreatment(firstLine);
+    }
+    setSoapModalOpen(false);
+  };
+
   // Submit Consultation Form
   const handleSubmitConsultation = async (e) => {
     e.preventDefault();
@@ -575,6 +673,49 @@ function DoctorDashboardContent() {
             </div>
           )}
 
+          {activeConsultation?.reason && (
+            <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-cyan-950/30 border border-cyan-500/20 p-4 rounded-2xl space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2">
+                  <span className="text-cyan-400 font-bold text-xs flex items-center space-x-1">
+                    <span>✨</span>
+                    <span>Patient Reported Symptoms & AI Clinical Handover</span>
+                  </span>
+                  {activeConsultation.reason.includes('Emergency') && (
+                    <span className="bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                      🚨 Emergency Priority
+                    </span>
+                  )}
+                  {activeConsultation.reason.includes('Priority') && !activeConsultation.reason.includes('Emergency') && (
+                    <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      ⚠️ Priority Case
+                    </span>
+                  )}
+                  {activeConsultation.reason.includes('Routine') && (
+                    <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      ✅ Routine
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cleanReason = activeConsultation.reason.split('\n\n[AI Triage')[0];
+                    setSymptoms(cleanReason);
+                  }}
+                  className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold cursor-pointer underline flex items-center space-x-1"
+                >
+                  <span>📋 Autofill Symptoms Field</span>
+                </button>
+              </div>
+              <div className="bg-zinc-950/80 border border-zinc-850 p-3 rounded-xl">
+                <p className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed">
+                  {activeConsultation.reason}
+                </p>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmitConsultation} className="space-y-6">
             <div className="space-y-1.5">
               <label htmlFor="diagnosis" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Diagnosis Findings *</label>
@@ -614,7 +755,29 @@ function DoctorDashboardContent() {
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="notes" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Consultation Comments / Notes</label>
+              <div className="flex items-center justify-between">
+                <label htmlFor="notes" className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  Consultation Comments / Notes
+                </label>
+                <button
+                  type="button"
+                  onClick={handleGenerateSoapNote}
+                  disabled={soapLoading}
+                  className="py-1 px-3 rounded-lg bg-gradient-to-r from-cyan-500/10 to-indigo-500/10 hover:from-cyan-500/20 hover:to-indigo-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {soapLoading ? (
+                    <>
+                      <span className="animate-spin text-[10px]">⏳</span>
+                      <span>Formatting SOAP Note...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="animate-pulse">✨</span>
+                      <span>Generate AI SOAP Note</span>
+                    </>
+                  )}
+                </button>
+              </div>
               <textarea
                 id="notes"
                 rows={3}
@@ -625,9 +788,80 @@ function DoctorDashboardContent() {
               />
             </div>
 
-            {/* Prescription List Section */}
+            {/* Prescription List Section with Live Safety Guard */}
             <div className="border border-zinc-850 rounded-2xl bg-zinc-950/30 p-5 space-y-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-indigo-400">Medication Prescription List</h3>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
+                    Medication Prescription List
+                  </h3>
+                  {prescriptionList.length > 0 && (
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      ({prescriptionList.length} item{prescriptionList.length > 1 ? 's' : ''})
+                    </span>
+                  )}
+                </div>
+
+                {/* Live Safety Guard Status */}
+                {prescriptionList.length > 0 && (
+                  <div className="flex items-center space-x-2">
+                    {safetyLoading ? (
+                      <span className="text-[11px] text-zinc-400 flex items-center space-x-1 bg-zinc-900 border border-zinc-800 px-2.5 py-1 rounded-lg">
+                        <span className="animate-spin text-[10px]">🛡️</span>
+                        <span>Verifying allergy safety...</span>
+                      </span>
+                    ) : safetyResult?.safetyStatus === 'danger' ? (
+                      <span className="text-[11px] text-rose-300 font-bold flex items-center space-x-1 bg-rose-950/60 border border-rose-600 px-2.5 py-1 rounded-lg animate-pulse">
+                        <span>🚨</span>
+                        <span>Allergy Contraindication Detected</span>
+                      </span>
+                    ) : safetyResult?.safetyStatus === 'warning' ? (
+                      <span className="text-[11px] text-amber-300 font-bold flex items-center space-x-1 bg-amber-950/60 border border-amber-600 px-2.5 py-1 rounded-lg">
+                        <span>⚠️</span>
+                        <span>Caution / Interaction Flagged</span>
+                      </span>
+                    ) : safetyResult ? (
+                      <span className="text-[11px] text-emerald-400 font-semibold flex items-center space-x-1 bg-emerald-950/60 border border-emerald-600 px-2.5 py-1 rounded-lg">
+                        <span>✅</span>
+                        <span>Prescriptions Verified Safe</span>
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+
+              {/* Safety Alerts Banner */}
+              {safetyResult?.alerts?.length > 0 && (
+                <div className="space-y-2">
+                  {safetyResult.alerts.map((alert, i) => (
+                    <div
+                      key={i}
+                      className={`p-3.5 rounded-xl border text-xs space-y-1 ${
+                        alert.severity === 'high'
+                          ? 'bg-rose-950/60 border-rose-600 text-rose-100 shadow-lg shadow-rose-950/30'
+                          : 'bg-amber-950/50 border-amber-600 text-amber-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2 font-bold">
+                          <span className="text-base">{alert.severity === 'high' ? '🚨' : '⚠️'}</span>
+                          <span>{alert.title}</span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/50 font-mono text-zinc-300">
+                          {alert.drug}
+                        </span>
+                      </div>
+                      <p className="text-zinc-200 text-xs leading-relaxed">{alert.description}</p>
+                      {alert.recommendation && (
+                        <div className="pt-1 text-[11px] font-semibold text-cyan-300 flex items-center space-x-1">
+                          <span>💡 Alternative Recommendation:</span>
+                          <span>{alert.recommendation}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
               
               {/* Added items list */}
               {prescriptionList.length === 0 ? (
@@ -705,6 +939,70 @@ function DoctorDashboardContent() {
               {savingConsultation ? 'Writing Clinical Record...' : 'Complete Consultation & Save Record'}
             </button>
           </form>
+
+          {/* AI SOAP Note Preview Modal */}
+          {soapModalOpen && soapPreview && (
+            <div className="fixed inset-0 z-50 bg-zinc-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-fadeIn">
+                <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xl">✨</span>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">AI-Generated SOAP Clinical Progress Note</h3>
+                      <p className="text-[11px] text-zinc-400">Structured clinical documentation ready for medical record</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSoapModalOpen(false)}
+                    className="h-8 w-8 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center text-xs cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="p-6 overflow-y-auto space-y-4 text-xs">
+                  <div className="bg-zinc-950 border border-zinc-850 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-cyan-400">S &bull; Subjective</span>
+                    <p className="text-zinc-200 leading-relaxed">{soapPreview.subjective}</p>
+                  </div>
+
+                  <div className="bg-zinc-950 border border-zinc-850 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-indigo-400">O &bull; Objective</span>
+                    <p className="text-zinc-200 leading-relaxed">{soapPreview.objective}</p>
+                  </div>
+
+                  <div className="bg-zinc-950 border border-zinc-850 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-purple-400">A &bull; Assessment</span>
+                    <p className="text-zinc-200 leading-relaxed">{soapPreview.assessment}</p>
+                  </div>
+
+                  <div className="bg-zinc-950 border border-zinc-850 p-4 rounded-2xl space-y-1">
+                    <span className="text-[10px] font-bold uppercase text-emerald-400">P &bull; Plan</span>
+                    <p className="text-zinc-200 leading-relaxed whitespace-pre-line">{soapPreview.plan}</p>
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-zinc-800 bg-zinc-900/60 flex justify-end space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setSoapModalOpen(false)}
+                    className="py-2 px-4 rounded-xl border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplySoapNote}
+                    className="py-2 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-zinc-950 font-bold text-xs shadow-lg shadow-cyan-500/10 cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <span>✓</span>
+                    <span>Apply SOAP Note to Consultation</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         /* Standard Tabs */
